@@ -26,11 +26,12 @@ android {
     signingConfigs {
         create("release") {
             val path = System.getenv("KEYSTORE_PATH")
-            if (path != null && file(path).exists()) {
+                ?: project.rootProject.file("keystore/tercuman-release.jks").absolutePath
+            if (file(path).exists()) {
                 storeFile = file(path)
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "tercuman123"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "tercuman"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "tercuman123"
             }
         }
     }
@@ -44,7 +45,8 @@ android {
                 "proguard-rules.pro"
             )
             val path = System.getenv("KEYSTORE_PATH")
-            signingConfig = if (path != null && file(path).exists()) {
+                ?: project.rootProject.file("keystore/tercuman-release.jks").absolutePath
+            signingConfig = if (file(path).exists()) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

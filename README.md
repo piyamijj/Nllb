@@ -15,7 +15,7 @@ Doğrudan bağlantı:
 https://github.com/piyamijj/Nllb/releases/download/latest/SesliTercuman-NLLB-v0.2.0.apk
 ```
 
-> APK ~180 MB. Model dosyaları (Whisper + VAD) paketin içinde gömülüdür;
+> APK ~190 MB. Model dosyaları (Whisper + VAD) paketin içinde gömülüdür;
 > kurulumdan sonra **internet gerekmez**. Kurulum için ~400 MB boş alan ayır.
 
 ## Bu sürümde (Faz 1)
@@ -29,6 +29,9 @@ https://github.com/piyamijj/Nllb/releases/download/latest/SesliTercuman-NLLB-v0.
 Çeviri (Faz 2) ve seslendirme (Faz 3) henüz yok.
 
 ## Kullanım
+
+> **İlk geçiş:** eski v0.1.0 sürümünü kaldır (imza değişti). Bundan sonraki
+> güncellemeler doğrudan üzerine kurulur — APK'lar depodaki sabit anahtarla imzalanır.
 
 1. APK'yı kur (bilinmeyen kaynaklara izin vermen gerekebilir)
 2. Uygulamayı aç, **Başlat**'a bas, mikrofon iznini ver
