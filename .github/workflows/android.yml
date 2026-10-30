@@ -14,13 +14,17 @@ concurrency:
   group: apk-main
   cancel-in-progress: true
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  SHERPA_ONNX_VERSION: 2.0.1
+  WHISPER_REV: bb53ee204431c90d314c1cc08d28d23e5b7927cc
+  HF_BASE: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout
@@ -31,6 +35,50 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Model cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/src/main/assets/models
+            app/libs
+          key: asr-models-whisper-base-int8-${{ env.WHISPER_REV }}-sherpa-${{ env.SHERPA_ONNX_VERSION }}
+
+      - name: Whisper base + Silero VAD indir
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/models/whisper
+          cd app/src/main/assets/models
+          if [ ! -s whisper/base-encoder.int8.onnx ]; then
+            echo "encoder indiriliyor..."
+            curl -fL --retry 3 --retry-delay 2 -o whisper/base-encoder.int8.onnx \
+              "$HF_BASE/$WHISPER_REV/base-encoder.int8.onnx"
+          fi
+          if [ ! -s whisper/base-decoder.int8.onnx ]; then
+            echo "decoder indiriliyor..."
+            curl -fL --retry 3 --retry-delay 2 -o whisper/base-decoder.int8.onnx \
+              "$HF_BASE/$WHISPER_REV/base-decoder.int8.onnx"
+          fi
+          if [ ! -s whisper/base-tokens.txt ]; then
+            curl -fL --retry 3 --retry-delay 2 -o whisper/base-tokens.txt \
+              "$HF_BASE/$WHISPER_REV/base-tokens.txt"
+          fi
+          if [ ! -s silero_vad.onnx ]; then
+            curl -fL --retry 3 --retry-delay 2 -o silero_vad.onnx \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+          fi
+          ls -lh whisper silero_vad.onnx
+
+      - name: sherpa-onnx AAR indir
+        run: |
+          set -e
+          mkdir -p app/libs
+          if [ ! -s "app/libs/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar" ]; then
+            curl -fL --retry 3 --retry-delay 2 \
+              -o "app/libs/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar" \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_ONNX_VERSION}/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar"
+          fi
+          ls -lh app/libs
 
       - name: Gradle cache
         uses: gradle/actions/setup-gradle@v4
@@ -43,7 +91,7 @@ jobs:
           set -e
           mkdir -p out
           SRC=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
-          cp "$SRC" "out/SesliTercuman-NLLB-v0.1.0.apk"
+          cp "$SRC" "out/SesliTercuman-NLLB-v0.2.0.apk"
           ls -lh out
 
       - name: Upload artifact
@@ -62,9 +110,10 @@ jobs:
           body: |
             Otomatik derlenmiş APK.
 
-            - Sürüm: v0.1.0 (Faz 0 iskeleti)
+            - Sürüm: v0.2.0 (Faz 1: Whisper base + Silero VAD, sürekli yazıya dökme)
             - Commit: `${{ github.sha }}`
             - ABI: arm64-v8a
+            - Not: Model dosyaları APK içinde gömülü, internet gerekmez.
           files: out/*.apk
           make_latest: true
           prerelease: false
