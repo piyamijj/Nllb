@@ -103,3 +103,35 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+// sherpa-onnx AAR'ındaki libonnxruntime.so, Java JNI'nin (onnxruntime4j) ihtiyaç
+// duyduğu OrtGetApiBase sembolünü vermiyor ("UnsatisfiedLinkError"). Bu kopyayı
+// AAR'dan çıkarıp onnxruntime-android'in kendi kütüphanesini kullanıyoruz.
+val stripSherpaOrt = tasks.register("stripSherpaOrt") {
+    val libsDir = file("libs")
+    doLast {
+        libsDir.listFiles { f -> f.name.startsWith("sherpa-onnx-") && f.name.endsWith(".aar") }
+            ?.forEach { aar ->
+                val tmp = File(aar.parentFile, aar.name + ".tmp")
+                var removed = 0
+                java.util.zip.ZipFile(aar).use { zf ->
+                    java.util.zip.ZipOutputStream(tmp.outputStream().buffered()).use { zo ->
+                        for (e in zf.entries()) {
+                            if (e.name.startsWith("jni/") && e.name.endsWith("/libonnxruntime.so")) {
+                                removed++
+                                continue
+                            }
+                            zo.putNextEntry(java.util.zip.ZipEntry(e.name))
+                            zf.getInputStream(e).use { it.copyTo(zo) }
+                            zo.closeEntry()
+                        }
+                    }
+                }
+                if (removed > 0) {
+                    aar.delete(); tmp.renameTo(aar)
+                } else tmp.delete()
+                println("stripSherpaOrt: ${aar.name} -> $removed kopya çıkarıldı")
+            }
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(stripSherpaOrt) }
