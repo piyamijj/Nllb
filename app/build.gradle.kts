@@ -139,3 +139,25 @@ val stripSherpaOrt = tasks.register("stripSherpaOrt") {
     }
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(stripSherpaOrt) }
+
+// TANI: sembol incelemesi (geçici)
+tasks.register("diagOrt") {
+    doLast {
+        val script = """
+            set -x
+            d=${'$'}(mktemp -d); cd ${'$'}d
+            curl -sL -o s.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar
+            curl -sL -o o.aar https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.28.0/onnxruntime-android-1.28.0.aar
+            unzip -qo s.aar 'jni/arm64-v8a/*' -d s; unzip -qo o.aar 'jni/arm64-v8a/*' -d o
+            for f in s/jni/arm64-v8a/*.so o/jni/arm64-v8a/*.so; do
+              echo "== ${'$'}f"; readelf -d ${'$'}f | grep -E "SONAME|NEEDED"
+              echo "defined:"; nm -D --defined-only ${'$'}f | grep -c Ort; nm -D --defined-only ${'$'}f | grep -E "OrtGetApiBase|OrtApi" | head
+              echo "undefined:"; nm -D -u ${'$'}f | grep -E "OrtGetApiBase" | head -2
+            done
+        """.trimIndent()
+        val p = ProcessBuilder("bash", "-c", script).redirectErrorStream(true).start()
+        p.inputStream.bufferedReader().forEachLine { println("DIAG " + it) }
+        p.waitFor()
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn("diagOrt") }
