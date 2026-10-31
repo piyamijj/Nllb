@@ -1,3 +1,7 @@
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -114,14 +118,14 @@ val stripSherpaOrt = tasks.register("stripSherpaOrt") {
             ?.forEach { aar ->
                 val tmp = File(aar.parentFile, aar.name + ".tmp")
                 var removed = 0
-                java.util.zip.ZipFile(aar).use { zf ->
-                    java.util.zip.ZipOutputStream(tmp.outputStream().buffered()).use { zo ->
+                ZipFile(aar).use { zf ->
+                    ZipOutputStream(tmp.outputStream().buffered()).use { zo ->
                         for (e in zf.entries()) {
                             if (e.name.startsWith("jni/") && e.name.endsWith("/libonnxruntime.so")) {
                                 removed++
                                 continue
                             }
-                            zo.putNextEntry(java.util.zip.ZipEntry(e.name))
+                            zo.putNextEntry(ZipEntry(e.name))
                             zf.getInputStream(e).use { it.copyTo(zo) }
                             zo.closeEntry()
                         }
