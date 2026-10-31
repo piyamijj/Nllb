@@ -1,6 +1,5 @@
-import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
-import java.util.zip.ZipOutputStream
+import java.net.URL
+
 
 plugins {
     id("com.android.application")
@@ -108,56 +107,22 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
 
-// sherpa-onnx AAR'ındaki libonnxruntime.so, Java JNI'nin (onnxruntime4j) ihtiyaç
-// duyduğu OrtGetApiBase sembolünü vermiyor ("UnsatisfiedLinkError"). Bu kopyayı
-// AAR'dan çıkarıp onnxruntime-android'in kendi kütüphanesini kullanıyoruz.
-val stripSherpaOrt = tasks.register("stripSherpaOrt") {
+// sherpa-onnx'in normal AAR'ı kendi libonnxruntime.so'sunu getirir ve onnxruntime-android
+// ile sembol sürümü çakışır (OrtGetApiBase@VERS_1.28.2 / 1.28.0). ORT'si statik gömülü
+// sürümüyle değiştiriyoruz; böylece tek libonnxruntime.so (onnxruntime-android) kalır.
+val useStaticSherpa = tasks.register("useStaticSherpa") {
     val libsDir = file("libs")
     doLast {
         libsDir.listFiles { f -> f.name.startsWith("sherpa-onnx-") && f.name.endsWith(".aar") }
             ?.forEach { aar ->
+                val ver = aar.name.removePrefix("sherpa-onnx-").removeSuffix(".aar")
+                val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$ver/" +
+                    "sherpa-onnx-static-link-onnxruntime-$ver.aar"
                 val tmp = File(aar.parentFile, aar.name + ".tmp")
-                var removed = 0
-                ZipFile(aar).use { zf ->
-                    ZipOutputStream(tmp.outputStream().buffered()).use { zo ->
-                        for (e in zf.entries()) {
-                            if (e.name.startsWith("jni/") && e.name.endsWith("/libonnxruntime.so")) {
-                                removed++
-                                continue
-                            }
-                            zo.putNextEntry(ZipEntry(e.name))
-                            zf.getInputStream(e).use { it.copyTo(zo) }
-                            zo.closeEntry()
-                        }
-                    }
-                }
-                if (removed > 0) {
-                    aar.delete(); tmp.renameTo(aar)
-                } else tmp.delete()
-                println("stripSherpaOrt: ${aar.name} -> $removed kopya çıkarıldı")
+                URL(url).openStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+                aar.delete(); tmp.renameTo(aar)
+                println("useStaticSherpa: $ver statik ORT sürümüyle değiştirildi (${aar.length()} bayt)")
             }
     }
 }
-tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(stripSherpaOrt) }
-
-// TANI: sembol incelemesi (geçici)
-tasks.register("diagOrt") {
-    doLast {
-        val script = """
-            set -x
-            d=${'$'}(mktemp -d); cd ${'$'}d
-            curl -sL -o s.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar
-            curl -sL -o o.aar https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.28.0/onnxruntime-android-1.28.0.aar
-            unzip -qo s.aar 'jni/arm64-v8a/*' -d s; unzip -qo o.aar 'jni/arm64-v8a/*' -d o
-            for f in s/jni/arm64-v8a/*.so o/jni/arm64-v8a/*.so; do
-              echo "== ${'$'}f"; readelf -d ${'$'}f | grep -E "SONAME|NEEDED"
-              echo "defined:"; nm -D --defined-only ${'$'}f | grep -c Ort; nm -D --defined-only ${'$'}f | grep -E "OrtGetApiBase|OrtApi" | head
-              echo "undefined:"; nm -D -u ${'$'}f | grep -E "OrtGetApiBase" | head -2
-            done
-        """.trimIndent()
-        val p = ProcessBuilder("bash", "-c", script).redirectErrorStream(true).start()
-        p.inputStream.bufferedReader().forEachLine { println("DIAG " + it) }
-        p.waitFor()
-    }
-}
-tasks.matching { it.name == "preBuild" }.configureEach { dependsOn("diagOrt") }
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(useStaticSherpa) }
