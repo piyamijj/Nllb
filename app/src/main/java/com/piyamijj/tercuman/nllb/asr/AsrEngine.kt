@@ -24,7 +24,9 @@ data class AsrResult(
  *   models/whisper/base-tokens.txt
  *   models/silero_vad.onnx
  *
- * Dil boş string ise Whisper her cümlede dili kendi algılar (LID).
+ * Dil boş string ise Whisper her cümlede dili kendi algılar (LID), ancak
+ * sonuç TR/FA dışına taşarsa cümle TR veya FA zorlanarak tekrar çözülür;
+ * otomatik kipte çıktı dili her zaman TR veya FA olur.
  */
 class AsrEngine(private val context: Context) {
 
@@ -39,6 +41,43 @@ class AsrEngine(private val context: Context) {
 
         private val BRACKETED = Regex("""^\s*[\[\(\*].*[\]\)\*]\s*$""")
         private val MULTI_SPACE = Regex("""\s+""")
+
+        /** Arap alfabesi blokları: Farsça metin bu aralıklardadır. */
+        private fun isArabicScript(c: Char): Boolean =
+            c in '\u0600'..'\u06FF' || c in '\uFB50'..'\uFDFF' || c in '\uFE70'..'\uFEFF'
+
+        /** Latin alfabesi blokları: Türkçe (ç, ğ, ı, ö, ş, ü dahil) bu aralıklardadır. */
+        private fun isLatinScript(c: Char): Boolean =
+            c in 'A'..'Z' || c in 'a'..'z' || c in '\u00C0'..'\u00FF' || c in '\u0100'..'\u017F'
+
+        internal fun arabicLetterCount(text: String): Int = text.count(::isArabicScript)
+
+        internal fun latinLetterCount(text: String): Int = text.count(::isLatinScript)
+
+        /**
+         * Metnin alfabesi iddia edilen dille uyumlu mu?
+         * Harf yoksa (sayı/noktalama) yargı verilemez, uyumlu sayılır.
+         */
+        internal fun isScriptConsistent(text: String, lang: String): Boolean {
+            val latin = latinLetterCount(text)
+            val arabic = arabicLetterCount(text)
+            if (latin == 0 && arabic == 0) return true
+            return if (lang == "fa") arabic >= latin else latin >= arabic
+        }
+
+        /**
+         * Otomatik kipte Whisper LID sonucuna göre zorlanacak dili seçer.
+         * null = sonucu olduğu gibi kabul et, "tr"/"fa" = o dile zorla ve tekrar çöz.
+         */
+        internal fun autoTargetLang(text: String, lang: String): String? {
+            if (text.isBlank()) return null
+            if (lang == "tr" || lang == "fa") {
+                if (isScriptConsistent(text, lang)) return null
+                return if (lang == "tr") "fa" else "tr"
+            }
+            // LID TR/FA dışına taştı (örn. de/ar): alfabeye göre karar ver.
+            return if (arabicLetterCount(text) > latinLetterCount(text)) "fa" else "tr"
+        }
     }
 
     private var recognizer: OfflineRecognizer? = null
@@ -80,31 +119,57 @@ class AsrEngine(private val context: Context) {
 
     @Synchronized
     fun setLanguage(language: String) {
+        if (recognizer == null || language == currentLang) return
+        applyConfig(language)
+    }
+
+    /**
+     * Cümleyi çözer.
+     *
+     * Otomatik kipte Whisper önce dili kendisi algılar; sonuç TR/FA dışına
+     * taşarsa (örn. Türkçe yerine "de", Farsça yerine "ar") cümle yazının
+     * alfabesine göre TR veya FA zorlanarak bir kez daha çözülür. Böylece
+     * otomatik kipte çıktı dili her zaman TR veya FA olur.
+     */
+    @Synchronized
+    fun transcribe(samples: FloatArray): AsrResult {
+        val r = recognizer ?: error("ASR modeli yüklenmedi")
+        val t0 = SystemClock.elapsedRealtime()
+        val (rawText, rawLang) = decodeOnce(r, samples)
+        val text = clean(rawText)
+        val lang = normalizeLang(rawLang)
+        val target = if (currentLang.isEmpty()) autoTargetLang(text, lang) else null
+        if (target == null) {
+            return AsrResult(text, lang, SystemClock.elapsedRealtime() - t0)
+        }
+        Log.i(TAG, "Otomatik dil düzeltmesi: '$lang' -> '$target'")
+        applyConfig(target, logChange = false)
+        try {
+            val (raw2, _) = decodeOnce(r, samples)
+            return AsrResult(clean(raw2), target, SystemClock.elapsedRealtime() - t0)
+        } finally {
+            applyConfig("", logChange = false)
+        }
+    }
+
+    private fun applyConfig(language: String, logChange: Boolean = true) {
         val r = recognizer ?: return
-        if (language == currentLang) return
         runCatching {
             r.setConfig(buildConfig(language, 2))
             currentLang = language
-            Log.i(TAG, "Dil değişti: '${language.ifEmpty { "auto" }}'")
+            if (logChange) Log.i(TAG, "Dil değişti: '${language.ifEmpty { "auto" }}'")
         }.onFailure {
             Log.w(TAG, "Dil değiştirilemedi", it)
         }
     }
 
-    @Synchronized
-    fun transcribe(samples: FloatArray): AsrResult {
-        val r = recognizer ?: error("ASR modeli yüklenmedi")
-        val t0 = SystemClock.elapsedRealtime()
+    private fun decodeOnce(r: OfflineRecognizer, samples: FloatArray): Pair<String, String> {
         val stream = r.createStream()
         try {
             stream.acceptWaveform(samples, SAMPLE_RATE)
             r.decode(stream)
             val res = r.getResult(stream)
-            return AsrResult(
-                text = clean(res.text),
-                lang = normalizeLang(res.lang),
-                elapsedMs = SystemClock.elapsedRealtime() - t0,
-            )
+            return res.text to res.lang
         } finally {
             stream.release()
         }
