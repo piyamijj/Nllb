@@ -74,12 +74,18 @@ fun HomeScreen(vm: MainViewModel) {
     SideEffect { view.keepScreenOn = state.listening }
 
     var showInfo by remember { mutableStateOf(false) }
+    var pendingEnroll by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) vm.start() else vm.showError("Mikrofon izni olmadan dinleyemem.")
+        if (granted) {
+            pendingEnroll?.let { vm.enroll(it); pendingEnroll = null } ?: vm.start()
+        } else {
+            pendingEnroll = null
+            vm.showError("Mikrofon izni olmadan dinleyemem.")
+        }
     }
 
     LaunchedEffect(state.entries.size) {
@@ -93,6 +99,25 @@ fun HomeScreen(vm: MainViewModel) {
 
         ModeRow(mode = state.mode, onSelect = vm::setMode)
 
+        EnrollRow(
+            enrolledMe = state.enrolledMe,
+            enrolledOther = state.enrolledOther,
+            enrolling = state.enrolling,
+            enabled = !state.loading,
+            onEnroll = { name ->
+                val granted = ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    vm.enroll(name)
+                } else {
+                    pendingEnroll = name
+                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            onReset = vm::resetSpeakers,
+        )
+
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (state.entries.isEmpty()) {
                 EmptyState(listening = state.listening)
@@ -104,7 +129,11 @@ fun HomeScreen(vm: MainViewModel) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(state.entries, key = { it.id }) { entry ->
-                        EntryCard(entry)
+                        EntryCard(
+                            entry,
+                            pendingTranslation = state.translating &&
+                                entry.translation.isBlank(),
+                        )
                     }
                 }
             }
@@ -132,7 +161,16 @@ fun HomeScreen(vm: MainViewModel) {
     }
 
     if (showInfo) {
-        InfoDialog(context = context, bundled = vm.modelsBundled(), onDismiss = { showInfo = false })
+        val speakers = listOfNotNull(
+            "Ben".takeIf { state.enrolledMe },
+            "Karşı".takeIf { state.enrolledOther },
+        ).joinToString(", ").ifEmpty { "kayıt yok" }
+        InfoDialog(
+            context = context,
+            bundled = vm.modelsBundled(),
+            speakers = speakers,
+            onDismiss = { showInfo = false },
+        )
     }
 }
 
@@ -156,7 +194,7 @@ private fun Header(onInfo: () -> Unit) {
                 VariantBadge(BuildConfig.VARIANT)
             }
             Text(
-                text = "Çevrimdışı · Türkçe ⇄ Farsça · Faz 1",
+                text = "Çevrimdışı · Türkçe ⇄ Farsça · Faz 3",
                 color = TextMuted,
                 fontSize = 12.sp,
             )
@@ -213,6 +251,77 @@ private fun ModeRow(mode: LangMode, onSelect: (LangMode) -> Unit) {
 }
 
 @Composable
+private fun EnrollRow(
+    enrolledMe: Boolean,
+    enrolledOther: Boolean,
+    enrolling: String?,
+    enabled: Boolean,
+    onEnroll: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            EnrollChip(
+                text = if (enrolledMe) "Ben ✓" else "Ben'i tanıt",
+                active = enrolledMe,
+                enabled = enabled && enrolling == null,
+                onClick = { onEnroll("ben") },
+            )
+            EnrollChip(
+                text = if (enrolledOther) "Karşı ✓" else "Karşı'yı tanıt",
+                active = enrolledOther,
+                enabled = enabled && enrolling == null,
+                onClick = { onEnroll("karsi") },
+            )
+            if (enrolledMe || enrolledOther) {
+                TextButton(onClick = onReset, enabled = enrolling == null) {
+                    Text("Sıfırla", color = TextMuted, fontSize = 12.sp)
+                }
+            }
+        }
+        if (enrolling != null) {
+            Text(
+                text = "Kaydediliyor… normal konuşun (4 sn)",
+                color = Accent,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EnrollChip(text: String, active: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (active) Ok.copy(alpha = 0.14f) else CardBg)
+            .border(
+                width = 1.dp,
+                color = if (active) Ok else Color.Transparent,
+                shape = RoundedCornerShape(20.dp),
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = text,
+            color = when {
+                !enabled -> Pending
+                active -> Ok
+                else -> TextMuted
+            },
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
 private fun EmptyState(listening: Boolean) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -241,7 +350,7 @@ private fun EmptyState(listening: Boolean) {
 }
 
 @Composable
-private fun EntryCard(entry: TranscriptEntry) {
+private fun EntryCard(entry: TranscriptEntry, pendingTranslation: Boolean) {
     val color = when (entry.lang) {
         "tr" -> TrColor
         "fa" -> FaColor
@@ -253,6 +362,16 @@ private fun EntryCard(entry: TranscriptEntry) {
         entry.lang.isNotBlank() -> entry.lang.uppercase()
         else -> "?"
     }
+    val speakerLabel = when (entry.speaker) {
+        "ben" -> "Ben"
+        "karsi" -> "Karşı"
+        else -> null
+    }
+    val cost = if (entry.mtMs > 0) {
+        "${entry.elapsedMs} ms + ${"%.1f".format(entry.mtMs / 1000.0)} sn"
+    } else {
+        "${entry.elapsedMs} ms"
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -261,20 +380,41 @@ private fun EntryCard(entry: TranscriptEntry) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(color.copy(alpha = 0.16f))
-                        .padding(horizontal = 7.dp, vertical = 3.dp)
-                ) {
-                    Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Badge(label, color)
+                if (speakerLabel != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Badge(speakerLabel, Ok)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("${entry.elapsedMs} ms", color = TextMuted, fontSize = 11.sp)
+                Text(cost, color = TextMuted, fontSize = 11.sp)
             }
             Spacer(Modifier.height(8.dp))
             Text(entry.text, color = TextMain, fontSize = 18.sp, lineHeight = 26.sp)
+            if (entry.translation.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "→ " + entry.translation,
+                    color = Accent,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                )
+            } else if (pendingTranslation) {
+                Spacer(Modifier.height(8.dp))
+                Text("Çevriliyor…", color = TextMuted, fontSize = 13.sp)
+            }
         }
+    }
+}
+
+@Composable
+private fun Badge(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.16f))
+            .padding(horizontal = 7.dp, vertical = 3.dp)
+    ) {
+        Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -341,7 +481,7 @@ private fun BottomBar(state: UiState, onToggle: () -> Unit, onClear: () -> Unit)
 
             else -> {
                 Text(
-                    text = "Hazır · Whisper base int8 · Silero VAD",
+                    text = "Hazır · Whisper base · ${BuildConfig.VARIANT} · Piper",
                     color = TextMuted,
                     fontSize = 12.sp,
                 )
@@ -382,7 +522,9 @@ private fun BottomBar(state: UiState, onToggle: () -> Unit, onClear: () -> Unit)
 }
 
 private fun statusText(state: UiState): String = when {
+    state.translating -> "Çevriliyor…"
     state.decoding -> "Yazıya dökülüyor…"
+    state.speaking -> "Seslendiriliyor…"
     state.speechActive -> "Konuşma algılandı"
     else -> "Dinliyorum…"
 }
@@ -407,7 +549,7 @@ private fun LevelBar(level: Float) {
 }
 
 @Composable
-private fun InfoDialog(context: Context, bundled: Boolean, onDismiss: () -> Unit) {
+private fun InfoDialog(context: Context, bundled: Boolean, speakers: String, onDismiss: () -> Unit) {
     val device = remember { readDeviceInfo(context) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -421,6 +563,8 @@ private fun InfoDialog(context: Context, bundled: Boolean, onDismiss: () -> Unit
                 InfoRow("Çeviri motoru", BuildConfig.MODEL_LABEL)
                 InfoRow("Konuşma tanıma", "Whisper base int8")
                 InfoRow("VAD", "Silero VAD")
+                InfoRow("Seslendirme", "Piper (dfki / ganji)")
+                InfoRow("Konuşmacı", speakers)
                 InfoRow("Model dosyaları", if (bundled) "APK içinde ✓" else "eksik ✗")
                 Spacer(Modifier.height(10.dp))
                 InfoRow("Cihaz", device.model)

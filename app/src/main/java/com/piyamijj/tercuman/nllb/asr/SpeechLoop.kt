@@ -10,6 +10,7 @@ import android.util.Log
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
+import com.piyamijj.tercuman.nllb.spk.SpeakerId
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
@@ -24,6 +25,7 @@ class SpeechLoop(
     private val context: Context,
     private val engine: AsrEngine,
     private val listener: Listener,
+    private val speakerId: SpeakerId? = null,
 ) {
 
     interface Listener {
@@ -50,8 +52,21 @@ class SpeechLoop(
     @Volatile
     private var record: AudioRecord? = null
 
+    /**
+     * Yarı-dubleks susturma: true iken kuyruktan alınan cümleler
+     * çözülmeden atılır (TTS çalarken kendi sesimizi dinlememek için).
+     */
+    @Volatile
+    var muted: Boolean = false
+
+    /** Kuyruğu boşaltır (susturma sonrası bayat cümleler çöpe). */
+    fun flush() {
+        queue.clear()
+    }
+
     fun start() {
         if (!running.compareAndSet(false, true)) return
+        muted = false
         queue.clear()
         decodeThread = Thread(::decodeLoop, "tercuman-decode").also { it.start() }
         audioThread = Thread(::audioLoop, "tercuman-audio").also { it.start() }
@@ -162,10 +177,18 @@ class SpeechLoop(
                 if (!running.get()) break else continue
             }
 
+            if (muted) continue
             listener.onDecoding(true)
             try {
                 val result = engine.transcribe(samples)
-                if (result.text.isNotBlank()) listener.onResult(result)
+                if (result.text.isNotBlank()) {
+                    val who = try {
+                        speakerId?.identify(samples) ?: ""
+                    } catch (t: Throwable) {
+                        ""
+                    }
+                    listener.onResult(result.copy(speaker = who))
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "çözümleme hatası", t)
                 listener.onError("Çözümleme hatası: ${t.message ?: "bilinmeyen"}")

@@ -12,8 +12,8 @@ android {
         applicationId = "com.piyamijj.tercuman.nllb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -78,11 +78,17 @@ android {
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/DEPENDENCIES"
         )
+        // sherpa-onnx AAR'ı ile onnxruntime-android aynı native
+        // libonnxruntime.so dosyasını taşır (aynı 1.28.x serisi).
+        jniLibs.pickFirsts += "**/libonnxruntime.so"
     }
 }
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+
+    // Çeviri motoru (sherpa'nın gömülü ORT'si ile aynı 1.28.x serisi).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.9.3")

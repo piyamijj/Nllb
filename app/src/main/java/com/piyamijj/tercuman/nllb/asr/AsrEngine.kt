@@ -13,6 +13,7 @@ data class AsrResult(
     val text: String,
     val lang: String,
     val elapsedMs: Long,
+    val speaker: String = "",
 )
 
 /**

@@ -17,14 +17,15 @@ concurrency:
 env:
   ANDROID_HOME: /usr/local/lib/android/sdk
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-  SHERPA_ONNX_VERSION: 2.0.1
+  SHERPA_ONNX_VERSION: 1.13.8
   WHISPER_REV: bb53ee204431c90d314c1cc08d28d23e5b7927cc
   HF_BASE: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve
+  MT_REPO: Xenova/nllb-200-distilled-600M
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -42,7 +43,7 @@ jobs:
           path: |
             app/src/main/assets/models
             app/libs
-          key: asr-models-whisper-base-int8-${{ env.WHISPER_REV }}-sherpa-${{ env.SHERPA_ONNX_VERSION }}
+          key: models-v3-whisper-${{ env.WHISPER_REV }}-sherpa-${{ env.SHERPA_ONNX_VERSION }}-mt1-tts1-spk1
 
       - name: Whisper base + Silero VAD indir
         run: |
@@ -69,15 +70,67 @@ jobs:
           fi
           ls -lh whisper silero_vad.onnx
 
+      - name: Çeviri modeli indir (NLLB int8)
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/models/mt
+          cd app/src/main/assets/models/mt
+          dl() {
+            if [ ! -s "$2" ]; then
+              echo "$1 indiriliyor..."
+              curl -fL --retry 3 --retry-delay 2 -o "$2" \
+                "https://huggingface.co/${MT_REPO}/resolve/main/onnx/$1"
+            fi
+          }
+          dl encoder_model_quantized.onnx encoder_quantized.onnx
+          dl decoder_model_merged_quantized.onnx decoder_merged_quantized.onnx
+          ls -lh
+
+      - name: Piper sesleri indir (tr + fa)
+        run: |
+          set -e
+          M="app/src/main/assets/models/tts"
+          mkdir -p "$M/tr" "$M/fa"
+          if [ -s "$M/tr/tr_TR-dfki-medium.onnx" ] && [ -s "$M/fa/fa_IR-ganji-medium.onnx" ] && [ -d "$M/espeak-ng-data" ]; then
+            echo "TTS hazır (önbellek)"
+            exit 0
+          fi
+          cd /tmp
+          for b in vits-piper-tr_TR-dfki-medium vits-piper-fa_IR-ganji-medium; do
+            curl -fL --retry 3 --retry-delay 2 -o "$b.tar.bz2" \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$b.tar.bz2"
+            rm -rf "$b" && tar xjf "$b.tar.bz2"
+          done
+          W="$GITHUB_WORKSPACE/$M"
+          cp vits-piper-tr_TR-dfki-medium/tr_TR-dfki-medium.onnx "$W/tr/"
+          cp vits-piper-tr_TR-dfki-medium/tokens.txt "$W/tr/"
+          cp vits-piper-fa_IR-ganji-medium/fa_IR-ganji-medium.onnx "$W/fa/"
+          cp vits-piper-fa_IR-ganji-medium/tokens.txt "$W/fa/"
+          rm -rf "$W/espeak-ng-data"
+          cp -r vits-piper-tr_TR-dfki-medium/espeak-ng-data "$W/"
+          ls "$W/espeak-ng-data/tr_dict" "$W/espeak-ng-data/fa_dict"
+          ls -lh "$W/tr" "$W/fa"
+          rm -rf /tmp/vits-piper-*
+
+      - name: Konuşmacı modeli indir (CAM++)
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/models/spk
+          F=app/src/main/assets/models/spk/campplus_voxceleb.onnx
+          if [ ! -s "$F" ]; then
+            curl -fL --retry 3 --retry-delay 2 -o "$F" \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
+          fi
+          ls -lh "$F"
+
       - name: sherpa-onnx AAR indir
         run: |
           set -e
           mkdir -p app/libs
-          if [ ! -s "app/libs/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar" ]; then
-            curl -fL --retry 3 --retry-delay 2 \
-              -o "app/libs/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar" \
-              "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_ONNX_VERSION}/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar"
-          fi
+          rm -f app/libs/sherpa-onnx-*.aar
+          curl -fL --retry 3 --retry-delay 2 \
+            -o "app/libs/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_ONNX_VERSION}/sherpa-onnx-${SHERPA_ONNX_VERSION}.aar"
           ls -lh app/libs
 
       - name: Gradle cache
@@ -91,7 +144,7 @@ jobs:
           set -e
           mkdir -p out
           SRC=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
-          cp "$SRC" "out/SesliTercuman-NLLB-v0.2.0.apk"
+          cp "$SRC" "out/SesliTercuman-NLLB-v0.3.0.apk"
           ls -lh out
 
       - name: Upload artifact
@@ -110,10 +163,10 @@ jobs:
           body: |
             Otomatik derlenmiş APK.
 
-            - Sürüm: v0.2.0 (Faz 1: Whisper base + Silero VAD, sürekli yazıya dökme)
+            - Sürüm: v0.3.0 (Faz 3: NLLB çeviri + Piper seslendirme + konuşmacı tanıma)
             - Commit: `${{ github.sha }}`
             - ABI: arm64-v8a
-            - Not: Model dosyaları APK içinde gömülü, internet gerekmez.
+            - Not: Tüm modeller APK içinde gömülü (~1.2 GB); kurulum için ~4 GB boş alan gerekir, sonrasında internet gerekmez.
           files: out/*.apk
           make_latest: true
           prerelease: false
