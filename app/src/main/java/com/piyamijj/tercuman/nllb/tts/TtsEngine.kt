@@ -130,13 +130,36 @@ class TtsEngine(private val context: Context) {
         faTts = null
     }
 
+    /** espeak-ng verisi dosya sistemi yolu ister; assets'ten filesDir'e bir kez kopyalanır. */
+    private fun espeakDir(): String {
+        val dest = java.io.File(context.filesDir, "espeak-ng-data")
+        val marker = java.io.File(dest, ".ok")
+        if (!marker.exists()) {
+            dest.deleteRecursively()
+            copyAssetDir(ESPEAK_DATA, dest)
+            marker.writeText("1")
+        }
+        return dest.absolutePath
+    }
+
+    private fun copyAssetDir(assetPath: String, dest: java.io.File) {
+        val list = context.assets.list(assetPath) ?: emptyArray()
+        if (list.isEmpty()) {
+            dest.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { i -> dest.outputStream().use { o -> i.copyTo(o) } }
+        } else {
+            dest.mkdirs()
+            for (n in list) copyAssetDir("$assetPath/$n", java.io.File(dest, n))
+        }
+    }
+
     private fun ttsConfig(model: String, tokens: String) = OfflineTtsConfig(
         model = OfflineTtsModelConfig(
             vits = OfflineTtsVitsModelConfig(
                 model = model,
                 lexicon = "",
                 tokens = tokens,
-                dataDir = ESPEAK_DATA,
+                dataDir = espeakDir(),
                 dictDir = "",
                 noiseScale = NOISE_SCALE,
                 noiseScaleW = NOISE_W,
