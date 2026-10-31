@@ -65,9 +65,9 @@ class TtsEngine(private val context: Context) {
     /**
      * İki sesi de yükler. Ağır işlemdir; ana thread'de çağrılmamalı.
      */
-    @Synchronized
     @Volatile var lastError: String? = null
 
+    @Synchronized
     fun load(): Boolean {
         if (isLoaded()) return true
         if (!modelFilesPresent()) {
