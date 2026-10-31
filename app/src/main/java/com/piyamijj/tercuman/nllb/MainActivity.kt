@@ -36,7 +36,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val st = CrashLog.lastStage(this)
         val crash = CrashLog.read(this)
+            ?: if (st != null && st != "done") "Uygulama şu aşamada aniden kapandı (yerel hata): " + st else null
         if (crash != null) {
             setContent {
                 Column(
@@ -57,7 +59,7 @@ class MainActivity : ComponentActivity() {
                             .padding(vertical = 8.dp)
                     )
                     Button(onClick = {
-                        CrashLog.clear(this@MainActivity)
+                        CrashLog.clear(this@MainActivity); CrashLog.stage(this@MainActivity, "done")
                         recreate()
                     }) { Text("Sil ve tekrar dene") }
                 }

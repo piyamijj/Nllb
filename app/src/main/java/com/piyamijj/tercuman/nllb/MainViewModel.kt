@@ -197,6 +197,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            CrashLog.stage(getApplication<Application>(), "MT yükleniyor")
             if (!_state.value.mtReady) {
                 _state.update {
                     it.copy(loading = true, loadingNote = "Çeviri motoru yükleniyor…")
@@ -213,11 +214,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(mtReady = ok) }
                 if (!ok) {
                     _state.update {
-                        it.copy(error = "Çeviri yüklenemedi; yalnızca yazıya dökme çalışacak.")
+                        it.copy(error = "Çeviri yüklenemedi: " + (mt.lastError ?: "dosya bulunamadı"))
                     }
                 }
             }
 
+            CrashLog.stage(getApplication<Application>(), "TTS yükleniyor")
             if (!_state.value.ttsReady) {
                 _state.update {
                     it.copy(loading = true, loadingNote = "Seslendirme yükleniyor…")
@@ -228,7 +230,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(ttsReady = ok) }
                 if (!ok) {
                     _state.update {
-                        it.copy(error = "Seslendirme yüklenemedi; çeviri sessiz okunacak.")
+                        it.copy(error = "Seslendirme yüklenemedi: " + (tts.lastError ?: "dosya bulunamadı"))
                     }
                 }
             }
@@ -236,11 +238,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.Default) {
                 runCatching { spk.load() }
             }
+            CrashLog.stage(getApplication<Application>(), "Konuşmacı tanıma yükleniyor")
             refreshEnrolled()
 
             _state.update { it.copy(loading = false) }
             if (_state.value.listening) return@launch
 
+            CrashLog.stage(getApplication<Application>(), "done")
             val speechLoop = SpeechLoop(getApplication<Application>(), engine, listener, spk)
             loop = speechLoop
             speechLoop.start()

@@ -70,6 +70,8 @@ class MtEngine(private val context: Context) {
     private var decoder: OrtSession? = null
     private var tokenizer: BpeTokenizer? = null
 
+    @Volatile var lastError: String? = null
+
     fun isLoaded(): Boolean = encoder != null && decoder != null && tokenizer != null
 
     /** Gerekli asset'ler APK'da var mı? */
@@ -125,7 +127,8 @@ class MtEngine(private val context: Context) {
             Log.i(TAG, "MT hazır (vocab=${tokenizer?.vocabSize()})")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "çeviri motoru yüklenemedi: ${t.message}")
+            Log.e(TAG, "çeviri motoru yüklenemedi", t)
+            lastError = t.javaClass.simpleName + ": " + (t.message ?: "").take(300)
             close()
             false
         }

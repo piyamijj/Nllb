@@ -66,6 +66,8 @@ class TtsEngine(private val context: Context) {
      * İki sesi de yükler. Ağır işlemdir; ana thread'de çağrılmamalı.
      */
     @Synchronized
+    @Volatile var lastError: String? = null
+
     fun load(): Boolean {
         if (isLoaded()) return true
         if (!modelFilesPresent()) {
@@ -79,7 +81,8 @@ class TtsEngine(private val context: Context) {
             Log.i(TAG, "TTS hazır: ${SystemClock.elapsedRealtime() - t0} ms")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "TTS yüklenemedi: ${t.message}")
+            Log.e(TAG, "TTS yüklenemedi", t)
+            lastError = t.javaClass.simpleName + ": " + (t.message ?: "").take(300)
             release()
             false
         }

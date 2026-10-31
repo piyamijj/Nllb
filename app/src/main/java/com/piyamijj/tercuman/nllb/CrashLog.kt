@@ -11,7 +11,7 @@ class TercumanApp : Application() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             runCatching {
-                CrashLog.file(this).writeText(
+                CrashLog.file(this).writeText("Aşama: " + CrashLog.lastStage(this) + "\n" +
                     "Thread: ${t.name}\n" + android.util.Log.getStackTraceString(e)
                 )
             }
@@ -25,5 +25,7 @@ object CrashLog {
     fun read(c: Context): String? = runCatching {
         file(c).takeIf { it.isFile }?.readText()
     }.getOrNull()
+    fun stage(c: Context, s: String) { runCatching { File(c.filesDir, "stage.txt").writeText(s) } }
+    fun lastStage(c: Context): String? = runCatching { File(c.filesDir, "stage.txt").takeIf { it.isFile }?.readText() }.getOrNull()
     fun clear(c: Context) { runCatching { file(c).delete() } }
 }
