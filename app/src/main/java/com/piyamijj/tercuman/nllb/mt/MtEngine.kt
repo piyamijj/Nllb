@@ -65,7 +65,7 @@ class MtEngine(private val context: Context) {
     private val presentNames: List<String> =
         pastNames.map { "present." + it.removePrefix("past_key_values.") }
 
-    private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
+    private val env: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
     private var encoder: OrtSession? = null
     private var decoder: OrtSession? = null
     private var tokenizer: BpeTokenizer? = null
