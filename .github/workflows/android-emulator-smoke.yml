@@ -1,0 +1,132 @@
+name: Android ARM64 smoke test
+
+on:
+  push:
+    branches:
+      - replit/android-arm64-smoke-test
+  workflow_run:
+    workflows: [APK]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Download the latest release APK
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 5 -o app.apk "https://github.com/piyamijj/Nllb/releases/download/latest/SesliTercuman-NLLB-v0.3.0.apk"
+          echo "Downloaded APK: $(stat -c%s app.apk) bytes"
+          test "$(stat -c%s app.apk)" -gt 1000000000
+
+      - name: Install and test on an ARM64 emulator
+        uses: reactivecircus/android-emulator-runner@62dbb605bba737720e10b196cb4220d374026a6d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_7_pro
+          cores: 4
+          ram-size: 8192M
+          disk-size: 8G
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          script: |
+            set -euo pipefail
+            adb install -r app.apk
+            adb shell pm grant com.piyamijj.tercuman.nllb android.permission.RECORD_AUDIO
+            adb shell am start -W -n com.piyamijj.tercuman.nllb/.MainActivity
+            python3 - <<'PY'
+            import re
+            import subprocess
+            import sys
+            import time
+            import xml.etree.ElementTree as ET
+
+            PACKAGE = "com.piyamijj.tercuman.nllb"
+
+            def adb(args, check=True, timeout=60):
+                result = subprocess.run(
+                    ["adb", *args], text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, timeout=timeout
+                )
+                if check and result.returncode:
+                    raise RuntimeError(result.stdout)
+                return result.stdout.strip()
+
+            def nodes():
+                adb(["shell", "uiautomator", "dump", "/sdcard/window.xml"], timeout=45)
+                xml = subprocess.run(
+                    ["adb", "exec-out", "cat", "/sdcard/window.xml"],
+                    check=True, capture_output=True, timeout=15
+                ).stdout
+                return [(n.get("text", "").strip(), n.get("bounds", ""))
+                        for n in ET.fromstring(xml).iter("node")]
+
+            def fail(message):
+                print("SMOKE TEST FAILED:", message)
+                print(adb(["logcat", "-d", "-v", "brief", "-t", "1000"], check=False, timeout=45))
+                sys.exit(1)
+
+            start_bounds = None
+            for _ in range(30):
+                try:
+                    for text, bounds in nodes():
+                        if text == "Başlat":
+                            start_bounds = bounds
+                            break
+                    if start_bounds:
+                        break
+                except Exception as error:
+                    print("Waiting for first screen:", error)
+                time.sleep(2)
+
+            if not start_bounds:
+                fail("The app did not show the Başlat button after launch.")
+
+            match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", start_bounds)
+            if not match:
+                fail("Could not read the Başlat button position: " + start_bounds)
+            x1, y1, x2, y2 = map(int, match.groups())
+            adb(["shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2)])
+            print("Tapped Başlat; waiting for model loading to finish.")
+
+            deadline = time.monotonic() + 900
+            combined = "(no UI dump yet)"
+            while time.monotonic() < deadline:
+                try:
+                    visible = [text for text, _ in nodes() if text]
+                except Exception as error:
+                    print("Waiting for app UI:", error)
+                    time.sleep(10)
+                    continue
+
+                combined = " | ".join(visible)
+                lower = combined.lower()
+                model_errors = [text for text in visible if any(
+                    marker in text.lower() for marker in (
+                        "asr modeli yüklenemedi", "çeviri yüklenemedi",
+                        "seslendirme yüklenemedi", "son açılışta çöktü",
+                        "aniden kapandı"
+                    )
+                )]
+                if model_errors:
+                    fail("Model/startup error: " + " | ".join(model_errors))
+                if "dinliyorum" in lower:
+                    if "mikrofon açılamadı" in lower:
+                        print("Note: emulator microphone is unavailable; model startup completed.")
+                    print("SMOKE TEST PASSED: app launched and reached listening state.")
+                    sys.exit(0)
+                if not adb(["shell", "pidof", PACKAGE], check=False):
+                    fail("The app process exited before model startup completed.")
+                time.sleep(10)
+
+            fail("Timed out before the app reached the listening state. Last UI: " + combined)
+            PY
